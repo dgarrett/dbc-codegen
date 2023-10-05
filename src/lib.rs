@@ -223,7 +223,8 @@ fn render_message(mut w: impl Write, msg: &Message, dbc: &DBC) -> Result<()> {
             let mut w = PadAdapter::wrap(&mut w);
             writeln!(
                 &mut w,
-                "let mut res = Self {{ raw: [0u8; {}] }};",
+                "let {} res = Self {{ raw: [0u8; {}] }};",
+                if msg.signals().is_empty() { "" } else { "mut" },
                 msg.message_size()
             )?;
             for signal in msg.signals().iter() {
@@ -526,12 +527,25 @@ fn render_set_signal_multiplexer(
         writeln!(&mut w, "let b0 = BitArray::<_, LocalBits>::new(self.raw);")?;
         writeln!(&mut w, "let b1 = BitArray::<_, LocalBits>::new(value.raw);")?;
         writeln!(&mut w, "self.raw = b0.bitor(b1).into_inner();")?;
-        writeln!(
-            &mut w,
-            "self.set_{}({})?;",
-            field_name(multiplexor.name()),
-            switch_index
-        )?;
+        if multiplexor.signal_size == 1 {
+            writeln!(
+                &mut w,
+                "self.set_{}({})?;",
+                field_name(multiplexor.name()),
+                match switch_index {
+                    0 => false,
+                    1 => true,
+                    _ => panic!("bad index"),
+                }
+            )?;
+        } else {
+            writeln!(
+                &mut w,
+                "self.set_{}({})?;",
+                field_name(multiplexor.name()),
+                switch_index
+            )?;
+        }
         writeln!(&mut w, "Ok(())",)?;
     }
 
@@ -591,7 +605,18 @@ fn render_multiplexor_signal(mut w: impl Write, signal: &Signal, msg: &Message) 
         {
             let mut w = PadAdapter::wrap(&mut w);
             for multiplexer_index in multiplexer_indexes.iter() {
-                writeln!(
+                if *multiplexer_indexes.iter().max().unwrap_or(&0) <= 1 {
+                    writeln!(
+                    &mut w,
+                    "{idx} => Ok({enum_name}::{multiplexed_wrapper_name}({multiplexed_name}{{ raw: self.raw }})),",
+                    idx = match multiplexer_index {0 => false, 1 => true, _ => panic!("Bad index")},
+                    enum_name = multiplex_enum_name(msg, signal)?,
+                    multiplexed_wrapper_name = multiplexed_enum_variant_wrapper_name(*multiplexer_index),
+                    multiplexed_name =
+                        multiplexed_enum_variant_name(msg, signal, *multiplexer_index)?
+                )?;
+                } else {
+                    writeln!(
                     &mut w,
                     "{idx} => Ok({enum_name}::{multiplexed_wrapper_name}({multiplexed_name}{{ raw: self.raw }})),",
                     idx = multiplexer_index,
@@ -600,6 +625,7 @@ fn render_multiplexor_signal(mut w: impl Write, signal: &Signal, msg: &Message) 
                     multiplexed_name =
                         multiplexed_enum_variant_name(msg, signal, *multiplexer_index)?
                 )?;
+                }
             }
             writeln!(
                 &mut w,
@@ -790,6 +816,8 @@ fn write_enum(
     variants: &[ValDescription],
 ) -> Result<()> {
     let type_name = enum_name(msg, signal);
+    // TODO: Or something like this for duplicate multiplex names?
+    // let type_name = format!("{}Values", type_name);
     let signal_rust_type = signal_to_rust_type(signal);
 
     writeln!(w, "/// Defined values for {}", signal.name())?;
@@ -895,10 +923,11 @@ fn type_name(x: &str) -> String {
 }
 
 fn field_name(x: &str) -> String {
+    let name = x.to_snake_case().replace("_raw", "_rawval");
     if keywords::is_keyword(x) || !x.starts_with(|c: char| c.is_ascii_alphabetic()) {
-        format!("x{}", x.to_snake_case())
+        format!("x{}", name)
     } else {
-        x.to_snake_case()
+        name
     }
 }
 
@@ -937,7 +966,7 @@ fn multiplex_enum_name(msg: &Message, multiplexor: &Signal) -> Result<String> {
         multiplexor
     );
     Ok(format!(
-        "{}{}",
+        "{}{}Mux",
         msg.message_name().to_pascal_case(),
         multiplexor.name().to_pascal_case()
     ))
