@@ -40,6 +40,7 @@ pub fn codegen(dbc_name: &str, dbc_content: &[u8], out: impl Write, debug: bool)
         "#![allow(unused_comparisons, unreachable_patterns)]"
     )?;
     writeln!(&mut w, "#![allow(clippy::let_and_return, clippy::eq_op)]")?;
+    writeln!(&mut w, "#![allow(unused)]")?;
     writeln!(
         &mut w,
         "#![allow(clippy::excessive_precision, clippy::manual_range_contains, clippy::absurd_extreme_comparisons)]"
