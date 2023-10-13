@@ -7,7 +7,10 @@
 #![deny(missing_docs, clippy::integer_arithmetic)]
 
 use anyhow::{anyhow, ensure, Context, Result};
-use can_dbc::{Message, MultiplexIndicator, Signal, ValDescription, ValueDescription, DBC};
+use can_dbc::{
+    AttributeValue, AttributeValuedForObjectType, Message, MultiplexIndicator, Signal,
+    ValDescription, ValueDescription, DBC,
+};
 use heck::{ToPascalCase, ToSnakeCase};
 use pad::PadAdapter;
 use std::{
@@ -241,6 +244,40 @@ fn render_message(mut w: impl Write, msg: &Message, dbc: &DBC) -> Result<()> {
         }
         writeln!(&mut w, "}}")?;
         writeln!(w)?;
+
+        for attr in dbc.attribute_values().iter() {
+            if attr.attribute_name() == "GenMsgStartValue" {
+                if let AttributeValuedForObjectType::MessageDefinitionAttributeValue(
+                    message_id,
+                    val,
+                ) = attr.attribute_value()
+                {
+                    if message_id == msg.message_id() {
+                        if let Some(val) = val {
+                            if let AttributeValue::AttributeValueCharString(val) = val {
+                                let default_val =
+                                    u64::from_str_radix(val.strip_suffix("h").unwrap_or(val), 16)
+                                        .expect("Bad hex string");
+                                let type_size = match msg.message_size() {
+                                    1 => "u8",
+                                    2 => "u16",
+                                    4 => "u32",
+                                    8 => "u64",
+                                    _ => panic!(),
+                                };
+                                writeln!(
+                                    &mut w,
+                                    "pub fn default() -> Self {{ Self {{ raw: {:#x}{}.to_be_bytes() }} }}",
+                                    default_val,
+                                    type_size
+                                )?;
+                                writeln!(w)?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         writeln!(&mut w, "/// Access message payload raw value")?;
         writeln!(&mut w, "pub fn raw(&self) -> &[u8] {{")?;
