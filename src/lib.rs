@@ -566,7 +566,28 @@ fn render_set_signal_multiplexer(
     {
         let mut w = PadAdapter::wrap(&mut w);
 
-        writeln!(&mut w, "let b0 = BitArray::<_, LocalBits>::new(self.raw);")?;
+        // First, clear the bit ranges for signals muxed by this multiplexer, then OR in the new value
+
+        writeln!(&mut w, "let mut current = self.raw;")?;
+        for signal in msg.signals() {
+            if let MultiplexIndicator::MultiplexedSignal(si) = signal.multiplexer_indicator()
+            {
+                if *si == switch_index {
+                    match signal.byte_order() {
+                        can_dbc::ByteOrder::LittleEndian => {
+                            let (start_bit, end_bit) = le_start_end_bit(signal, msg)?;
+                            writeln!(&mut w, "current.view_bits_mut::<Lsb0>()[{start_bit}..{end_bit}].store_le(0);")?;
+                        }
+                        can_dbc::ByteOrder::BigEndian => {
+                            let (start_bit, end_bit) = be_start_end_bit(signal, msg)?;
+                            writeln!(&mut w, "current.view_bits_mut::<Msb0>()[{start_bit}..{end_bit}].store_be(0);")?;
+                        }
+                    };
+                }
+            }
+        }
+
+        writeln!(&mut w, "let b0 = BitArray::<_, LocalBits>::new(current);")?;
         writeln!(&mut w, "let b1 = BitArray::<_, LocalBits>::new(value.raw);")?;
         writeln!(&mut w, "self.raw = b0.bitor(b1).into_inner();")?;
         if multiplexor.signal_size == 1 {
